@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"math"
@@ -77,50 +78,8 @@ func listenAction(c *cli.Context) {
 	tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	color.New(color.FgYellow).Printf("Listening for %d seconds...\n", duration)
-
-	bar := pb.New(duration * 10)
-	bar.SetRefreshRate(100 * time.Millisecond)
-	bar.Start()
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < duration*10; i++ {
-			select {
-			case <-done:
-				return
-			case <-time.After(100 * time.Millisecond):
-				bar.Increment()
-			}
-		}
-	}()
-
-	args := ffmpegArgs(duration, tmp.Name())
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		close(done)
-		bar.Finish()
-		log.Fatal("ffmpeg recording failed: ", err)
-	}
-	close(done)
-	bar.Finish()
-
-	fmt.Println("Identifying song...")
 	client := &audd.Client{APIKey: apiKey}
-	result, err := client.Recognize(tmp.Name())
-	if err != nil {
-		log.Fatal("Song identification error: ", err)
-	}
-	if result == nil {
-		log.Fatal("Song not recognized. Try again with a clearer audio source or longer duration (--duration 8).")
-	}
-
-	color.New(color.FgGreen, color.Bold).Printf("Detected: %s — %s\n\n", result.Title, result.Artist)
-
-	searchTitle := cleanTitle(result.Title) + " " + result.Artist
-
 	s := ultimateguitar.New()
-
 	preferChords := tabTypePref != "tabs"
 	primaryType := ultimateguitar.TabTypeChords
 	fallbackType := ultimateguitar.TabTypeTabs
@@ -129,41 +88,91 @@ func listenAction(c *cli.Context) {
 		fallbackType = ultimateguitar.TabTypeChords
 	}
 
-	searchResult, err := s.Search(ultimateguitar.SearchParams{
-		Title: searchTitle,
-		Type:  []ultimateguitar.TabType{primaryType},
-	})
-	if err != nil {
-		log.Fatal("Search error: ", err)
-	}
+	gray := color.New(color.FgHiBlack)
 
-	if len(searchResult.Tabs) == 0 {
-		searchResult, err = s.Search(ultimateguitar.SearchParams{
-			Title: searchTitle,
-			Type:  []ultimateguitar.TabType{fallbackType},
-		})
-		if err != nil {
-			log.Fatal("Search error: ", err)
+	for {
+		color.New(color.FgYellow).Printf("Listening for %d seconds...\n", duration)
+
+		bar := pb.New(duration * 10)
+		bar.SetRefreshRate(100 * time.Millisecond)
+		bar.Start()
+		done := make(chan struct{})
+		go func() {
+			for i := 0; i < duration*10; i++ {
+				select {
+				case <-done:
+					return
+				case <-time.After(100 * time.Millisecond):
+					bar.Increment()
+				}
+			}
+		}()
+
+		ffCmd := exec.Command("ffmpeg", ffmpegArgs(duration, tmp.Name())...)
+		ffCmd.Stderr = nil
+		if err := ffCmd.Run(); err != nil {
+			close(done)
+			bar.Finish()
+			fmt.Fprintf(os.Stderr, "ffmpeg recording failed: %v\n", err)
+			goto prompt
 		}
-	}
+		close(done)
+		bar.Finish()
 
-	if len(searchResult.Tabs) == 0 {
-		fmt.Printf("No tabs found for \"%s\" by %s.\n", result.Title, result.Artist)
-		fmt.Println("Try fetching manually: ug fetch -id <tab_id>")
-		return
-	}
+		{
+			fmt.Println("Identifying song...")
+			result, err := client.Recognize(tmp.Name())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Song identification error: %v\n", err)
+				goto prompt
+			}
+			if result == nil {
+				fmt.Println("Song not recognized. Try a clearer source or --duration 8.")
+				goto prompt
+			}
 
-	best := selectBestTab(searchResult.Tabs)
-	if best == nil {
-		log.Fatal("Could not select a tab from search results.")
-	}
+			color.New(color.FgGreen, color.Bold).Printf("Detected: %s — %s\n\n", result.Title, result.Artist)
 
-	tab, err := s.GetTabByID(best.ID)
-	if err != nil {
-		log.Fatal("Failed to fetch tab: ", err)
-	}
+			searchTitle := cleanTitle(result.Title) + " " + result.Artist
+			searchResult, err := s.Search(ultimateguitar.SearchParams{
+				Title: searchTitle,
+				Type:  []ultimateguitar.TabType{primaryType},
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Search error: %v\n", err)
+				goto prompt
+			}
+			if len(searchResult.Tabs) == 0 {
+				searchResult, err = s.Search(ultimateguitar.SearchParams{
+					Title: searchTitle,
+					Type:  []ultimateguitar.TabType{fallbackType},
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Search error: %v\n", err)
+					goto prompt
+				}
+			}
+			if len(searchResult.Tabs) == 0 {
+				fmt.Printf("No tabs found for \"%s\" by %s.\n", result.Title, result.Artist)
+				goto prompt
+			}
 
-	printTab(tab, noChords)
+			best := selectBestTab(searchResult.Tabs)
+			tab, err := s.GetTabByID(best.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to fetch tab: %v\n", err)
+				goto prompt
+			}
+
+			printTab(tab, noChords)
+		}
+
+	prompt:
+		fmt.Println()
+		gray.Print("Press Enter to listen again, or Ctrl+C to quit...")
+		bufio.NewReader(os.Stdin).ReadString('\n')
+		fmt.Println()
+	}
 }
 
 func ffmpegArgs(duration int, outPath string) []string {
