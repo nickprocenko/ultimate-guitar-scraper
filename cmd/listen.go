@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Pilfer/ultimate-guitar-scraper/pkg/acoustid"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/audd"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/ultimateguitar"
 	"github.com/cheggaaa/pb/v3"
@@ -23,7 +24,7 @@ var ListenCommand = cli.Command{
 	Name:        "listen",
 	Aliases:     []string{"l"},
 	Usage:       "ug listen",
-	Description: "Listen to audio, detect the song, and display its chords. Requires ffmpeg and an AudD API key (https://audd.io, free tier: 100/month). Set AUDD_API_KEY env var or use --api-key.",
+	Description: "Listen to audio, detect the song, and display its chords.\n\nUses AcoustID (free, unlimited) first, falls back to AudD (100/month free).\nRequires ffmpeg. AcoustID also requires fpcalc (chromaprint).\n\nKeys via env vars: ACOUSTID_API_KEY, AUDD_API_KEY\nGet AcoustID key (free): https://acoustid.org/login\nGet AudD key (free tier): https://audd.io",
 	Flags: []cli.Flag{
 		cli.IntFlag{
 			Name:  "duration,d",
@@ -31,7 +32,11 @@ var ListenCommand = cli.Command{
 			Usage: "Recording duration in seconds (1-10)",
 		},
 		cli.StringFlag{
-			Name:  "api-key",
+			Name:  "acoustid-key",
+			Usage: "AcoustID client key (overrides ACOUSTID_API_KEY env var)",
+		},
+		cli.StringFlag{
+			Name:  "audd-key,api-key",
 			Usage: "AudD API key (overrides AUDD_API_KEY env var)",
 		},
 		cli.StringFlag{
@@ -52,12 +57,45 @@ func listenAction(c *cli.Context) {
 		log.Fatal("ffmpeg not found. Install it first:\n  Linux:  apt install ffmpeg\n  macOS:  brew install ffmpeg\n  Windows: https://ffmpeg.org/download.html")
 	}
 
-	apiKey := c.String("api-key")
-	if apiKey == "" {
-		apiKey = os.Getenv("AUDD_API_KEY")
+	acoustidKey := c.String("acoustid-key")
+	if acoustidKey == "" {
+		acoustidKey = os.Getenv("ACOUSTID_API_KEY")
 	}
-	if apiKey == "" {
-		log.Fatal("AudD API key required. Set AUDD_API_KEY env var or use --api-key.\nGet a free key at https://audd.io (100 recognitions/month free).")
+
+	auddKey := c.String("audd-key")
+	if auddKey == "" {
+		auddKey = os.Getenv("AUDD_API_KEY")
+	}
+
+	if acoustidKey == "" && auddKey == "" {
+		log.Fatal("At least one recognition API key is required.\n\n" +
+			"AcoustID (free, unlimited) — https://acoustid.org/login\n" +
+			"  Set: ACOUSTID_API_KEY or --acoustid-key\n" +
+			"  Also requires: apt install libchromaprint-tools  (or brew install chromaprint)\n\n" +
+			"AudD (100/month free) — https://audd.io\n" +
+			"  Set: AUDD_API_KEY or --audd-key")
+	}
+
+	// AcoustID requires fpcalc — warn and disable if not found.
+	var acoustidClient *acoustid.Client
+	if acoustidKey != "" {
+		if _, err := exec.LookPath("fpcalc"); err != nil {
+			color.New(color.FgYellow).Fprintln(os.Stderr,
+				"Warning: fpcalc not found — AcoustID disabled. Install chromaprint to enable it:\n"+
+					"  Linux:  apt install libchromaprint-tools\n"+
+					"  macOS:  brew install chromaprint")
+		} else {
+			acoustidClient = &acoustid.Client{APIKey: acoustidKey}
+		}
+	}
+
+	var auddClient *audd.Client
+	if auddKey != "" {
+		auddClient = &audd.Client{APIKey: auddKey}
+	}
+
+	if acoustidClient == nil && auddClient == nil {
+		log.Fatal("No recognition service available. Check your API keys and fpcalc installation.")
 	}
 
 	duration := c.Int("duration")
@@ -78,7 +116,6 @@ func listenAction(c *cli.Context) {
 	tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	client := &audd.Client{APIKey: apiKey}
 	s := ultimateguitar.New()
 	preferChords := tabTypePref != "tabs"
 	primaryType := ultimateguitar.TabTypeChords
@@ -121,7 +158,7 @@ func listenAction(c *cli.Context) {
 
 		{
 			fmt.Println("Identifying song...")
-			result, err := client.Recognize(tmp.Name())
+			result, err := identify(acoustidClient, auddClient, tmp.Name())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Song identification error: %v\n", err)
 				goto prompt
@@ -175,6 +212,23 @@ func listenAction(c *cli.Context) {
 	}
 }
 
+// identify tries AcoustID first (free, unlimited), then falls back to AudD.
+// Returns nil, nil when no service recognizes the song.
+func identify(ac *acoustid.Client, ad *audd.Client, audioPath string) (*audd.Result, error) {
+	if ac != nil {
+		r, err := ac.Recognize(audioPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "AcoustID: %v — trying AudD...\n", err)
+		} else if r != nil {
+			return r, nil
+		}
+	}
+	if ad != nil {
+		return ad.Recognize(audioPath)
+	}
+	return nil, nil
+}
+
 func ffmpegArgs(duration int, outPath string) []string {
 	var inputArgs []string
 	switch runtime.GOOS {
@@ -183,7 +237,6 @@ func ffmpegArgs(duration int, outPath string) []string {
 	case "windows":
 		inputArgs = []string{"-f", "dshow", "-i", "audio=Microphone"}
 	default:
-		// Linux: try alsa, pulse is common too
 		inputArgs = []string{"-f", "alsa", "-i", "default"}
 	}
 	return append(inputArgs,
@@ -208,7 +261,6 @@ func selectBestTab(tabs []ultimateguitar.Tab) *ultimateguitar.Tab {
 		}
 	}
 
-	// All zero-vote tabs: fall back to highest rating
 	if bestScore == 0 {
 		for i := range tabs {
 			t := &tabs[i]
