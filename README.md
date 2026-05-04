@@ -1,62 +1,113 @@
-# Ultimate Guitar Scraper  
+# ChordFinder (ultimate-guitar-scraper)
 
-Ultimate-Guitar.com is the world's largest online database of guitar tablature. They also have a horrible UI that is filled with advertisements, interstitials, and other annoying stuff.  
+Listens to audio from your microphone or radio, identifies the song, and displays the chords and tab notation. Works as a CLI tool on desktop or a web app on any phone browser.
 
-This package allows you to programmatically fetch tabs and do pretty much whatever you want with them depending on the data structure of the response. 
+## How it works
 
-#### Potential use-cases might include...
+```
+mic / radio
+     │
+     ▼
+  ffmpeg records audio
+     │
+     ▼
+  AcoustID (free, unlimited)  ──miss──▶  AudD (100/month free)
+     │
+     ▼
+  Ultimate Guitar API  →  best chord tab
+     │
+     ▼
+  Supabase cache (repeat songs are instant)
+     │
+     ▼
+  chords + tab displayed
+```
 
-- CLI tab viewer/manager  
-- A utility that calculates the most used chords or progressions in a specific set of songs  
-- Automatic transposition service  
-- A tab "player" - similar to the "GuitarPro" application  
-- Save text-based tabs + associated meta  
-- Generate and save HTML, PDF, etc tabs  
-- Download tabs then upload to popular services like Google Drive, Dropbox, etc  
+## Prerequisites
 
-### Features  
+- **Go 1.17+** — to build the CLI
+- **ffmpeg** — audio capture and conversion
+  - Linux: `apt install ffmpeg`
+  - macOS: `brew install ffmpeg`
+- **fpcalc** (Chromaprint) — audio fingerprinting for AcoustID
+  - Linux: `apt install libchromaprint-tools`
+  - macOS: `brew install chromaprint`
 
-- [X] Commandline interface (WIP)
-- [X] Fetch a tab by id  
-- [X] Fetch all your saved tabs.
-- [X] Fetch tab by URL
-- [X] Search for tabs  
-- [X] Explore popular tabs  
-- [X] Export tab as `.wav` (Thanks to [https://github.com/timiskhakov/music](https://github.com/timiskhakov/music))!!  
-- [X] Fetch popular tabs (see: `ultimateguitar.Explore`)  
-- [ ] Scrape all tabs by artist  
-  -  Fun fact: on mobile, UG doesn't have a "list tabs by artist name/id" endpoint. They just load ~7 pages. Weird. The functionality for this is technically here already, I just didn't add a helper method. Go nuts.  
+## API Keys
 
-### Building  
+| Service | Used for | Cost | Sign up |
+|---------|----------|------|---------|
+| AcoustID | Song detection (primary) | Free, unlimited | [acoustid.org/login](https://acoustid.org/login) |
+| AudD | Song detection (fallback) | 100/month free | [audd.io](https://audd.io) |
+| Supabase | Tab result cache | Free tier | [supabase.com](https://supabase.com) |
 
-1. `go build` (lol)  
+At least one of AcoustID or AudD is required.
 
-### Using the CLI  
+## CLI Usage
 
-Run `./ultimate-guitar-scraper -h` if you're curious, buuuut...
+### Build
 
-- Fetch a tab: `./ultimate-guitar-scraper fetch -id 96835 -output wee.wav`  
-- Fetch all your saved tabs: `./ultimate-guitar-scraper get_all --output ./out`  
-- Fetch and export tab as HTML (using `cmd/data/template.tmpl`): `./ultimate-guitar-scraper export -id 96835`  
-- Fetch a tab and export it as a .wav file: `./ultimate-guitar-scraper wav -id 113039 -output hallelujah.wav`  
+```sh
+go build -o chordfinder .
+```
 
+### Listen (main feature)
 
-#### ... But why?  
+```sh
+export ACOUSTID_API_KEY="your_key"
+export AUDD_API_KEY="your_key"       # optional fallback
 
-As much as I appreciate the work UG has done compiling the largest online guitar tabs database, I can't bring myself to use their website or mobile app (and definitely not their website on mobile!). I started working on this package (originally a node module) as a way for me to view tabs/chord charts without dealing with their display ads and interstitials.  
+./chordfinder listen                  # 5-second recording, loops
+./chordfinder listen --duration 8    # longer recording
+./chordfinder listen --type tabs     # prefer tab notation over chords
+./chordfinder listen --no-chords     # skip chord diagram summary
+```
 
+Press **Enter** to listen again, **Ctrl+C** to quit.
 
-#### Technology Used
+### Other commands
 
-- Golang (duh)  
-- Frida - [https://frida.re/](https://frida.re/)  
-- JEB Decompiler - [https://www.pnfsoftware.com/jeb/android](https://www.pnfsoftware.com/jeb/android)  
-- Charles / mitmproxy  
-- This awesome experimental package: https://github.com/timiskhakov/music  
+```sh
+./chordfinder fetch -id 96835              # fetch a tab by ID
+./chordfinder export -id 96835             # export tab as HTML
+./chordfinder wav -id 113039 -output out.wav  # export tab as WAV
+./chordfinder get_all --output ./tabs      # download all your saved tabs (requires login)
+```
 
+## Web App
 
-## Disclaimer / Legal  
+Anyone with a phone browser can use it — no install required.
 
-This software's purpose is purely educational. I am not responsible for how you use this package. This repository and all others associated with it are not affiliated with, authorized, or endorsed by Ultimate-Guitar.com. 
+### Deploy to Railway
 
+1. Push this repo to GitHub
+2. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub
+3. Select the repo — Railway will detect the `Dockerfile` and build automatically
+4. Set environment variables (see below)
+5. Go to **Settings → Networking → Generate Domain** to get your public URL
 
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ACOUSTID_API_KEY` | one of these two | AcoustID client key |
+| `AUDD_API_KEY` | one of these two | AudD API key |
+| `SUPABASE_URL` | optional | Supabase project URL |
+| `SUPABASE_KEY` | optional | Supabase anon/public key |
+| `PORT` | set by Railway | Port to listen on (default: 8080) |
+
+## Supabase Cache Setup
+
+Run this once in your Supabase SQL editor:
+
+```sql
+create table tab_cache (
+  cache_key  text primary key,
+  tab_data   jsonb not null,
+  created_at timestamptz default now()
+);
+```
+
+## Disclaimer
+
+This project is for educational purposes. Not affiliated with or endorsed by Ultimate-Guitar.com. Use responsibly.
