@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ChordFinder</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --text: #f0f0f0;
+      --muted: #888;
+      --accent: #f59e0b;
+      --accent-dim: #78450a;
+      --green: #22c55e;
+      --red: #ef4444;
+      --radius: 12px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      padding: 20px 24px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.3px; }
+    header span { font-size: 1.5rem; }
+
+    #home {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 40px 24px;
+      text-align: center;
+    }
+
+    #listen-btn {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      transition: transform 0.15s, background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    #listen-btn:active { transform: scale(0.93); }
+    #listen-btn.recording { background: var(--red); }
+    #listen-btn.loading { background: var(--surface); border: 2px solid var(--accent); cursor: default; }
+
+    .pulse-ring {
+      position: absolute;
+      inset: -12px;
+      border-radius: 50%;
+      border: 3px solid var(--red);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .recording .pulse-ring {
+      animation: pulse 1.4s ease-out infinite;
+    }
+    @keyframes pulse {
+      0%   { opacity: 0.8; transform: scale(1); }
+      100% { opacity: 0;   transform: scale(1.45); }
+    }
+
+    #btn-label {
+      font-size: 0.95rem;
+      color: var(--muted);
+      min-height: 1.4em;
+    }
+
+    #countdown {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--red);
+      min-height: 1.2em;
+      display: none;
+    }
+    #countdown.visible { display: block; }
+
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Results ── */
+    #results {
+      display: none;
+      flex-direction: column;
+      width: 100%;
+      max-width: 680px;
+      padding: 16px 16px 100px;
+      gap: 12px;
+    }
+    #results.visible { display: flex; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .detected-label {
+      font-size: 0.75rem;
+      color: var(--green);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .song-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .song-artist {
+      font-size: 0.95rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .song-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .badge {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .badge.gold { border-color: var(--accent-dim); color: var(--accent); }
+
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+
+    .chords-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chord-pill {
+      background: var(--bg);
+      border: 1px solid var(--accent-dim);
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      min-width: 52px;
+    }
+    .chord-pill .name { font-size: 0.9rem; font-weight: 700; color: var(--accent); }
+    .chord-pill .frets { font-size: 0.65rem; color: var(--muted); font-family: monospace; letter-spacing: 0.05em; }
+
+    .tab-content {
+      font-family: "Menlo", "Consolas", "Courier New", monospace;
+      font-size: 0.78rem;
+      line-height: 1.65;
+      white-space: pre;
+      overflow-x: auto;
+      color: #ccc;
+      -webkit-overflow-scrolling: touch;
+    }
+    .tab-content .chord-inline {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .source-link {
+      font-size: 0.75rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .source-link a { color: var(--muted); }
+
+    /* ── Floating listen-again button ── */
+    #listen-again {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      font-size: 0.95rem;
+      border: none;
+      border-radius: 50px;
+      padding: 14px 32px;
+      cursor: pointer;
+      display: none;
+      box-shadow: 0 4px 24px rgba(245,158,11,0.35);
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      white-space: nowrap;
+    }
+    #listen-again.visible { display: block; }
+    #listen-again:active { transform: translateX(-50%) scale(0.96); }
+
+    #error-msg {
+      font-size: 0.9rem;
+      color: var(--red);
+      text-align: center;
+      max-width: 280px;
+      display: none;
+    }
+    #error-msg.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span>🎸</span>
+  <h1>ChordFinder</h1>
+</header>
+
+<section id="home">
+  <button id="listen-btn" aria-label="Start listening">
+    <div class="pulse-ring"></div>
+    <span id="btn-icon">🎵</span>
+  </button>
+  <div id="countdown"></div>
+  <p id="btn-label">Tap to identify a song</p>
+  <p id="error-msg"></p>
+</section>
+
+<section id="results">
+  <div class="card" id="card-detected"></div>
+  <div class="card" id="card-chords" style="display:none"></div>
+  <div class="card" id="card-tab" style="display:none"></div>
+  <div class="card" id="card-source" style="display:none"></div>
+</section>
+
+<button id="listen-again">🎵 Listen Again</button>
+
+<script>
+  const DURATION = 5; // seconds
+
+  const btn         = document.getElementById('listen-btn');
+  const btnIcon     = document.getElementById('btn-icon');
+  const btnLabel    = document.getElementById('btn-label');
+  const countdown   = document.getElementById('countdown');
+  const errorMsg    = document.getElementById('error-msg');
+  const homeSection = document.getElementById('home');
+  const results     = document.getElementById('results');
+  const listenAgain = document.getElementById('listen-again');
+
+  btn.addEventListener('click', startListening);
+  listenAgain.addEventListener('click', reset);
+
+  function setError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.classList.add('visible');
+    btn.classList.remove('recording', 'loading');
+    btnIcon.textContent = '🎵';
+    btnLabel.textContent = 'Tap to try again';
+    countdown.classList.remove('visible');
+  }
+
+  function reset() {
+    results.classList.remove('visible');
+    listenAgain.classList.remove('visible');
+    errorMsg.classList.remove('visible');
+    btn.classList.remove('recording', 'loading');
+    btnIcon.textContent = '🎵';
+    btnLabel.textContent = 'Tap to identify a song';
+    countdown.classList.remove('visible');
+    homeSection.style.display = '';
+  }
+
+  async function startListening() {
+    if (btn.classList.contains('recording') || btn.classList.contains('loading')) return;
+
+    errorMsg.classList.remove('visible');
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (e) {
+      setError('Microphone access denied. Please allow mic access and try again.');
+      return;
+    }
+
+    btn.classList.add('recording');
+    btnIcon.textContent = '🎤';
+    btnLabel.textContent = 'Listening...';
+    countdown.textContent = DURATION;
+    countdown.classList.add('visible');
+
+    const tick = setInterval(() => {
+      const n = parseInt(countdown.textContent) - 1;
+      countdown.textContent = n > 0 ? n : '';
+      if (n <= 0) clearInterval(tick);
+    }, 1000);
+
+    // Record audio
+    let audioBlob;
+    try {
+      audioBlob = await record(stream, DURATION * 1000);
+    } catch (e) {
+      clearInterval(tick);
+      stream.getTracks().forEach(t => t.stop());
+      setError('Recording failed: ' + e.message);
+      return;
+    }
+
+    clearInterval(tick);
+    stream.getTracks().forEach(t => t.stop());
+
+    // Show loading state
+    btn.classList.remove('recording');
+    btn.classList.add('loading');
+    btnIcon.textContent = '';
+    btnLabel.textContent = 'Identifying...';
+    countdown.classList.remove('visible');
+    const spinnerEl = document.createElement('div');
+    spinnerEl.className = 'spinner';
+    btnIcon.replaceWith(spinnerEl);
+
+    let data;
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
+      const resp = await fetch('/api/identify', { method: 'POST', body: formData });
+      data = await resp.json();
+    } catch (e) {
+      spinnerEl.replaceWith(btnIcon);
+      setError('Could not reach the server. Check your connection.');
+      return;
+    }
+
+    spinnerEl.replaceWith(btnIcon);
+    btn.classList.remove('loading');
+
+    if (data.error === 'not_recognized') {
+      setError('Song not recognized. Try holding your phone closer to the speaker.');
+      return;
+    }
+    if (data.error === 'no_tab_found') {
+      setError(`Detected "${data.detected.title}" by ${data.detected.artist}, but no tab was found on Ultimate Guitar.`);
+      return;
+    }
+    if (data.error) {
+      setError('Something went wrong. Please try again.');
+      return;
+    }
+
+    showResults(data);
+  }
+
+  function record(stream, durationMs) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      const mimeType = getSupportedMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+      recorder.onerror = e => reject(e.error);
+      recorder.start(100);
+      setTimeout(() => recorder.stop(), durationMs);
+    });
+  }
+
+  function getSupportedMimeType() {
+    const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  }
+
+  function showResults(data) {
+    homeSection.style.display = 'none';
+    results.classList.add('visible');
+    listenAgain.classList.add('visible');
+
+    const { detected, tab } = data;
+
+    // Detected card
+    const det = document.getElementById('card-detected');
+    let metaHTML = '';
+    if (tab.type)         metaHTML += `<span class="badge">${tab.type}</span>`;
+    if (tab.tuning)       metaHTML += `<span class="badge">Tuning: ${tab.tuning}</span>`;
+    if (tab.capo > 0)     metaHTML += `<span class="badge">Capo ${tab.capo}</span>`;
+    if (tab.rating > 0)   metaHTML += `<span class="badge gold">★ ${tab.rating.toFixed(1)} (${tab.votes})</span>`;
+    if (data.cached)      metaHTML += `<span class="badge">cached</span>`;
+    det.innerHTML = `
+      <div class="detected-label">✓ Detected</div>
+      <div class="song-title">${esc(tab.song_name || detected.title)}</div>
+      <div class="song-artist">by ${esc(tab.artist_name || detected.artist)}</div>
+      ${metaHTML ? `<div class="song-meta">${metaHTML}</div>` : ''}
+    `;
+
+    // Chords card
+    if (tab.applicature && tab.applicature.length > 0) {
+      const chordsCard = document.getElementById('card-chords');
+      const pillsHTML = tab.applicature.map(a => {
+        const frets = a.variations && a.variations[0] ? a.variations[0].id : '';
+        return `<div class="chord-pill"><span class="name">${esc(a.chord)}</span>${frets ? `<span class="frets">${esc(frets)}</span>` : ''}</div>`;
+      }).join('');
+      chordsCard.innerHTML = `<div class="section-label">Chords Used</div><div class="chords-grid">${pillsHTML}</div>`;
+      chordsCard.style.display = '';
+    }
+
+    // Tab content card
+    if (tab.content) {
+      const tabCard = document.getElementById('card-tab');
+      tabCard.innerHTML = `<div class="section-label">Tab</div><div class="tab-content">${renderContent(tab.content)}</div>`;
+      tabCard.style.display = '';
+    }
+
+    // Source card
+    if (tab.url_web) {
+      const src = document.getElementById('card-source');
+      src.innerHTML = `<div class="source-label">Source: <a href="${esc(tab.url_web)}" target="_blank" rel="noopener">${esc(tab.url_web)}</a></div>`;
+      src.className = 'source-link';
+      src.style.display = '';
+    }
+
+    results.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+
+  function renderContent(raw) {
+    // Strip [tab]/[/tab], highlight [ch]...[/ch]
+    let s = raw
+      .replace(/\[tab\]|\[\/tab\]/g, '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    s = s.replace(/\[ch\](.*?)\[\/ch\]/g, (_, chord) =>
+      `<span class="chord-inline">${chord}</span>`
+    );
+    return s;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>

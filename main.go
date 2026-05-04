@@ -20,6 +20,7 @@ func main() {
 		cmd.ExportWav,
 		cmd.GetAll,
 		cmd.ListenCommand,
+		cmd.ServeCommand,
 	}
 
 	err := app.Run(os.Args)
