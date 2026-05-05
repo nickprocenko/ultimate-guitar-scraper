@@ -22,6 +22,7 @@ func main() {
 		cmd.ListenCommand,
 		cmd.ServeCommand,
 	}
+	app.Action = cmd.ServeCommand.Action
 
 	err := app.Run(os.Args)
 
