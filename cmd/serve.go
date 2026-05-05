@@ -66,24 +66,20 @@ type detectedSong struct {
 }
 
 func serveAction(c *cli.Context) {
+	srv := &appServer{scraper: ultimateguitar.New()}
+
+	// ffmpeg — warn but don't crash; identify will return an error if missing
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		log.Fatal("ffmpeg not found. Install with: apt install ffmpeg")
+		log.Println("Warning: ffmpeg not found — audio processing will fail")
 	}
 
+	// API keys — warn only; checked lazily in handleIdentify
 	acoustidKey := os.Getenv("ACOUSTID_API_KEY")
 	auddKey := os.Getenv("AUDD_API_KEY")
 
-	if acoustidKey == "" && auddKey == "" {
-		log.Fatal("Set at least one recognition key:\n" +
-			"  ACOUSTID_API_KEY — free, unlimited (https://acoustid.org/login)\n" +
-			"  AUDD_API_KEY     — 100/month free (https://audd.io)")
-	}
-
-	srv := &appServer{scraper: ultimateguitar.New()}
-
 	if acoustidKey != "" {
 		if _, err := exec.LookPath("fpcalc"); err != nil {
-			log.Println("Warning: fpcalc not found — AcoustID disabled. Install chromaprint to enable it.")
+			log.Println("Warning: fpcalc not found — AcoustID disabled")
 		} else {
 			srv.acoustidClient = &acoustid.Client{APIKey: acoustidKey}
 		}
@@ -91,13 +87,13 @@ func serveAction(c *cli.Context) {
 	if auddKey != "" {
 		srv.auddClient = &audd.Client{APIKey: auddKey}
 	}
-	if srv.acoustidClient == nil && srv.auddClient == nil {
-		log.Fatal("No recognition service available. Check your API keys and fpcalc installation.")
+	if acoustidKey == "" && auddKey == "" {
+		log.Println("Warning: no API keys set — /api/identify will return no_keys_configured")
 	}
 
 	if supaURL, supaKey := os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"); supaURL != "" && supaKey != "" {
 		srv.cache = &supabaseCache{URL: supaURL, APIKey: supaKey}
-		log.Println("Supabase cache enabled.")
+		log.Println("Supabase cache enabled")
 	}
 
 	preferChords := c.String("type") != "tabs"
@@ -116,6 +112,7 @@ func serveAction(c *cli.Context) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.handleIndex)
+	mux.HandleFunc("/health", srv.handleHealth)
 	mux.HandleFunc("/api/identify", srv.handleIdentify)
 
 	log.Printf("ChordFinder listening on :%s", port)
@@ -125,6 +122,11 @@ func serveAction(c *cli.Context) {
 func (srv *appServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(indexHTML)
+}
+
+func (srv *appServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +141,11 @@ func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if srv.acoustidClient == nil && srv.auddClient == nil {
+		writeJSON(w, identifyResponse{Error: "no_keys_configured"})
 		return
 	}
 
