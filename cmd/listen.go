@@ -202,38 +202,13 @@ func listenAction(c *cli.Context) {
 
 			color.New(color.FgGreen, color.Bold).Printf("Detected: %s — %s\n\n", result.Title, result.Artist)
 
-			searchTitle := cleanTitle(result.Title) + " " + result.Artist
-			searchResult, err := s.Search(ultimateguitar.SearchParams{
-				Title: searchTitle,
-				Type:  []ultimateguitar.TabType{primaryType},
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Search error: %v\n", err)
-				goto prompt
-			}
-			if len(searchResult.Tabs) == 0 {
-				searchResult, err = s.Search(ultimateguitar.SearchParams{
-					Title: searchTitle,
-					Type:  []ultimateguitar.TabType{fallbackType},
-				})
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Search error: %v\n", err)
-					goto prompt
-				}
-			}
-			if len(searchResult.Tabs) == 0 {
+			tab, err := searchAndFetch(s, result.Title, result.Artist, primaryType, fallbackType)
+			if err != nil || tab == nil {
 				fmt.Printf("No tabs found for \"%s\" by %s.\n", result.Title, result.Artist)
 				goto prompt
 			}
 
-			best := selectBestTab(searchResult.Tabs)
-			tab, err := s.GetTabByID(best.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to fetch tab: %v\n", err)
-				goto prompt
-			}
-
-			printTab(tab, noChords)
+			printTab(*tab, noChords)
 		}
 
 	prompt:

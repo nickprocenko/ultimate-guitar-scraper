@@ -223,36 +223,50 @@ func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Search Ultimate Guitar
-	searchTitle := cleanTitle(result.Title) + " " + result.Artist
-	searchResult, _ := srv.scraper.Search(ultimateguitar.SearchParams{
-		Title: searchTitle,
-		Type:  []ultimateguitar.TabType{srv.primaryType},
-	})
-	if len(searchResult.Tabs) == 0 {
-		searchResult, _ = srv.scraper.Search(ultimateguitar.SearchParams{
-			Title: searchTitle,
-			Type:  []ultimateguitar.TabType{srv.fallbackType},
-		})
-	}
-	if len(searchResult.Tabs) == 0 {
+	// Search Ultimate Guitar — try multiple query strategies
+	tab, tabErr := searchAndFetch(srv.scraper, result.Title, result.Artist, srv.primaryType, srv.fallbackType)
+	if tabErr != nil || tab == nil {
 		writeJSON(w, identifyResponse{Detected: detected, Error: "no_tab_found"})
-		return
-	}
-
-	best := selectBestTab(searchResult.Tabs)
-	tab, err := srv.scraper.GetTabByID(best.ID)
-	if err != nil {
-		writeJSON(w, identifyResponse{Detected: detected, Error: "tab_fetch_failed"})
 		return
 	}
 
 	// Store in cache
 	if srv.cache != nil {
-		srv.cache.Set(cacheKey, &tab)
+		srv.cache.Set(cacheKey, tab)
 	}
 
-	writeJSON(w, identifyResponse{Detected: detected, Tab: &tab})
+	writeJSON(w, identifyResponse{Detected: detected, Tab: tab})
+}
+
+// searchAndFetch tries several query strategies against UG and returns the
+// best tab found, or nil if nothing matches.
+func searchAndFetch(s ultimateguitar.Scraper, title, artist string, primary, fallback ultimateguitar.TabType) (*ultimateguitar.TabResult, error) {
+	clean := cleanTitle(title)
+	queries := []string{
+		clean,                      // title only — usually works best
+		clean + " " + artist,      // title + artist
+		artist + " " + clean,      // artist + title
+		artist,                    // artist only — last resort
+	}
+
+	for _, q := range queries {
+		for _, tabType := range []ultimateguitar.TabType{primary, fallback} {
+			res, err := s.Search(ultimateguitar.SearchParams{
+				Title: q,
+				Type:  []ultimateguitar.TabType{tabType},
+			})
+			if err != nil || len(res.Tabs) == 0 {
+				continue
+			}
+			best := selectBestTab(res.Tabs)
+			tab, err := s.GetTabByID(best.ID)
+			if err != nil {
+				continue
+			}
+			return &tab, nil
+		}
+	}
+	return nil, nil
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
