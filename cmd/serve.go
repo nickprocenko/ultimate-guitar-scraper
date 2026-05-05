@@ -245,11 +245,10 @@ func searchAndFetch(s ultimateguitar.Scraper, title, artist string, primary, fal
 	normalized := normalizeNumbers(clean)
 	queries := []string{
 		clean,                      // title only
-		normalized,                 // title with numbers as words (e.g. "million" not "1000000")
+		normalized,                 // title with numbers as words
 		clean + " " + artist,      // title + artist
 		normalized + " " + artist, // normalized title + artist
 		artist + " " + clean,      // artist + title
-		artist,                    // artist only — last resort
 	}
 	// deduplicate while preserving order
 	seen := map[string]bool{}
