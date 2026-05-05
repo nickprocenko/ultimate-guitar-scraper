@@ -291,8 +291,8 @@ func selectBestTab(tabs []ultimateguitar.Tab) *ultimateguitar.Tab {
 var (
 	reFeat        = regexp.MustCompile(`(?i)\s*[\(\[]feat\.?.*?[\)\]]`)
 	reFt          = regexp.MustCompile(`(?i)\s*[\(\[]ft\.?.*?[\)\]]`)
-	reNoiseSuffix = regexp.MustCompile(`(?i)\s*[-–]\s*(single version|radio edit|live|remastered.*|acoustic.*|official.*|original.*)\s*$`)
-	reParenNoise  = regexp.MustCompile(`(?i)\s*\((live|remastered.*|acoustic.*)\)`)
+	reNoiseSuffix = regexp.MustCompile(`(?i)\s*[-–]\s*(single version|single|radio edit|live|remastered.*|acoustic.*|official.*|original.*|deluxe.*|anniversary.*|re-?recorded.*|mono|stereo)\s*$`)
+	reParenNoise  = regexp.MustCompile(`(?i)\s*[\(\[](single version|single|radio edit|live|remastered.*|acoustic.*|deluxe.*|anniversary.*|re-?recorded.*|mono|stereo|official.*|original.*|album version|explicit)[\)\]]`)
 	reDigitGroup  = regexp.MustCompile(`\d[\d,]*`)
 )
 
