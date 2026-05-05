@@ -242,12 +242,25 @@ func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
 // best tab found, or nil if nothing matches.
 func searchAndFetch(s ultimateguitar.Scraper, title, artist string, primary, fallback ultimateguitar.TabType) (*ultimateguitar.TabResult, error) {
 	clean := cleanTitle(title)
+	normalized := normalizeNumbers(clean)
 	queries := []string{
-		clean,                      // title only — usually works best
+		clean,                      // title only
+		normalized,                 // title with numbers as words (e.g. "million" not "1000000")
 		clean + " " + artist,      // title + artist
+		normalized + " " + artist, // normalized title + artist
 		artist + " " + clean,      // artist + title
 		artist,                    // artist only — last resort
 	}
+	// deduplicate while preserving order
+	seen := map[string]bool{}
+	unique := queries[:0]
+	for _, q := range queries {
+		if q != "" && !seen[q] {
+			seen[q] = true
+			unique = append(unique, q)
+		}
+	}
+	queries = unique
 
 	for _, q := range queries {
 		for _, tabType := range []ultimateguitar.TabType{primary, fallback} {

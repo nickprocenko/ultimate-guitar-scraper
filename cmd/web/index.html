@@ -419,11 +419,20 @@
     if (tab.capo > 0)     metaHTML += `<span class="badge">Capo ${tab.capo}</span>`;
     if (tab.rating > 0)   metaHTML += `<span class="badge gold">★ ${tab.rating.toFixed(1)} (${tab.votes})</span>`;
     if (data.cached)      metaHTML += `<span class="badge">cached</span>`;
+
+    const detectedTitle  = detected.title.toLowerCase();
+    const tabTitle       = (tab.song_name || '').toLowerCase();
+    const mismatch       = tabTitle && !tabTitle.includes(detectedTitle.slice(0,6)) && !detectedTitle.includes(tabTitle.slice(0,6));
+    const mismatchHTML   = mismatch
+      ? `<div style="margin-top:8px;font-size:0.78rem;color:#f59e0b">⚠ Detected "${esc(detected.title)}" — closest tab shown below</div>`
+      : '';
+
     det.innerHTML = `
       <div class="detected-label">✓ Detected</div>
       <div class="song-title">${esc(tab.song_name || detected.title)}</div>
       <div class="song-artist">by ${esc(tab.artist_name || detected.artist)}</div>
       ${metaHTML ? `<div class="song-meta">${metaHTML}</div>` : ''}
+      ${mismatchHTML}
     `;
 
     // Chords card

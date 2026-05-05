@@ -293,7 +293,18 @@ var (
 	reFt          = regexp.MustCompile(`(?i)\s*[\(\[]ft\.?.*?[\)\]]`)
 	reNoiseSuffix = regexp.MustCompile(`(?i)\s*[-–]\s*(single version|radio edit|live|remastered.*|acoustic.*|official.*|original.*)\s*$`)
 	reParenNoise  = regexp.MustCompile(`(?i)\s*\((live|remastered.*|acoustic.*)\)`)
+	reDigitGroup  = regexp.MustCompile(`\d[\d,]*`)
 )
+
+var numberWords = map[string]string{
+	"1000000000": "billion",
+	"1,000,000,000": "billion",
+	"1000000": "million",
+	"1,000,000": "million",
+	"1000": "thousand",
+	"1,000": "thousand",
+	"100": "hundred",
+}
 
 func cleanTitle(s string) string {
 	s = reFeat.ReplaceAllString(s, "")
@@ -301,6 +312,17 @@ func cleanTitle(s string) string {
 	s = reNoiseSuffix.ReplaceAllString(s, "")
 	s = reParenNoise.ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
+}
+
+// normalizeNumbers replaces digit sequences with word equivalents where known,
+// so "1000000 Dollars" matches "Million Dollars" on UG.
+func normalizeNumbers(s string) string {
+	return reDigitGroup.ReplaceAllStringFunc(s, func(m string) string {
+		if word, ok := numberWords[m]; ok {
+			return word
+		}
+		return m
+	})
 }
 
 var (
