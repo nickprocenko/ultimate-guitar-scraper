@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Pilfer/ultimate-guitar-scraper/pkg/acrcloud"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/acoustid"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/audd"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/ultimateguitar"
@@ -30,6 +31,18 @@ var ListenCommand = cli.Command{
 			Name:  "duration,d",
 			Value: 5,
 			Usage: "Recording duration in seconds (1-10)",
+		},
+		cli.StringFlag{
+			Name:  "acrcloud-key",
+			Usage: "ACRCloud access key (overrides ACRCLOUD_ACCESS_KEY env var)",
+		},
+		cli.StringFlag{
+			Name:  "acrcloud-secret",
+			Usage: "ACRCloud access secret (overrides ACRCLOUD_ACCESS_SECRET env var)",
+		},
+		cli.StringFlag{
+			Name:  "acrcloud-host",
+			Usage: "ACRCloud host (overrides ACRCLOUD_HOST env var)",
 		},
 		cli.StringFlag{
 			Name:  "acoustid-key",
@@ -57,6 +70,19 @@ func listenAction(c *cli.Context) {
 		log.Fatal("ffmpeg not found. Install it first:\n  Linux:  apt install ffmpeg\n  macOS:  brew install ffmpeg\n  Windows: https://ffmpeg.org/download.html")
 	}
 
+	acrKey := c.String("acrcloud-key")
+	if acrKey == "" {
+		acrKey = os.Getenv("ACRCLOUD_ACCESS_KEY")
+	}
+	acrSecret := c.String("acrcloud-secret")
+	if acrSecret == "" {
+		acrSecret = os.Getenv("ACRCLOUD_ACCESS_SECRET")
+	}
+	acrHost := c.String("acrcloud-host")
+	if acrHost == "" {
+		acrHost = os.Getenv("ACRCLOUD_HOST")
+	}
+
 	acoustidKey := c.String("acoustid-key")
 	if acoustidKey == "" {
 		acoustidKey = os.Getenv("ACOUSTID_API_KEY")
@@ -67,23 +93,29 @@ func listenAction(c *cli.Context) {
 		auddKey = os.Getenv("AUDD_API_KEY")
 	}
 
-	if acoustidKey == "" && auddKey == "" {
+	if acrKey == "" && acoustidKey == "" && auddKey == "" {
 		log.Fatal("At least one recognition API key is required.\n\n" +
+			"ACRCloud (2000/month free) — https://acrcloud.com\n" +
+			"  Set: ACRCLOUD_ACCESS_KEY, ACRCLOUD_ACCESS_SECRET, ACRCLOUD_HOST\n\n" +
 			"AcoustID (free, unlimited) — https://acoustid.org/login\n" +
-			"  Set: ACOUSTID_API_KEY or --acoustid-key\n" +
-			"  Also requires: apt install libchromaprint-tools  (or brew install chromaprint)\n\n" +
+			"  Set: ACOUSTID_API_KEY\n\n" +
 			"AudD (100/month free) — https://audd.io\n" +
-			"  Set: AUDD_API_KEY or --audd-key")
+			"  Set: AUDD_API_KEY")
 	}
 
-	// AcoustID requires fpcalc — warn and disable if not found.
+	var acrClient *acrcloud.Client
+	if acrKey != "" && acrSecret != "" && acrHost != "" {
+		acrClient = &acrcloud.Client{Host: acrHost, AccessKey: acrKey, AccessSecret: acrSecret}
+	} else if acrKey != "" {
+		color.New(color.FgYellow).Fprintln(os.Stderr,
+			"Warning: ACRCloud needs ACRCLOUD_ACCESS_KEY, ACRCLOUD_ACCESS_SECRET and ACRCLOUD_HOST — skipping")
+	}
+
 	var acoustidClient *acoustid.Client
 	if acoustidKey != "" {
 		if _, err := exec.LookPath("fpcalc"); err != nil {
 			color.New(color.FgYellow).Fprintln(os.Stderr,
-				"Warning: fpcalc not found — AcoustID disabled. Install chromaprint to enable it:\n"+
-					"  Linux:  apt install libchromaprint-tools\n"+
-					"  macOS:  brew install chromaprint")
+				"Warning: fpcalc not found — AcoustID disabled.")
 		} else {
 			acoustidClient = &acoustid.Client{APIKey: acoustidKey}
 		}
@@ -94,8 +126,8 @@ func listenAction(c *cli.Context) {
 		auddClient = &audd.Client{APIKey: auddKey}
 	}
 
-	if acoustidClient == nil && auddClient == nil {
-		log.Fatal("No recognition service available. Check your API keys and fpcalc installation.")
+	if acrClient == nil && acoustidClient == nil && auddClient == nil {
+		log.Fatal("No recognition service available. Check your API keys.")
 	}
 
 	duration := c.Int("duration")
@@ -158,7 +190,7 @@ func listenAction(c *cli.Context) {
 
 		{
 			fmt.Println("Identifying song...")
-			result, err := identify(acoustidClient, auddClient, tmp.Name())
+			result, err := identify(acrClient, acoustidClient, auddClient, tmp.Name())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Song identification error: %v\n", err)
 				goto prompt
@@ -212,13 +244,21 @@ func listenAction(c *cli.Context) {
 	}
 }
 
-// identify tries AcoustID first (free, unlimited), then falls back to AudD.
+// identify tries ACRCloud → AcoustID → AudD in order, returning the first hit.
 // Returns nil, nil when no service recognizes the song.
-func identify(ac *acoustid.Client, ad *audd.Client, audioPath string) (*audd.Result, error) {
+func identify(acr *acrcloud.Client, ac *acoustid.Client, ad *audd.Client, audioPath string) (*audd.Result, error) {
+	if acr != nil {
+		r, err := acr.Recognize(audioPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ACRCloud: %v — trying next...\n", err)
+		} else if r != nil {
+			return r, nil
+		}
+	}
 	if ac != nil {
 		r, err := ac.Recognize(audioPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "AcoustID: %v — trying AudD...\n", err)
+			fmt.Fprintf(os.Stderr, "AcoustID: %v — trying next...\n", err)
 		} else if r != nil {
 			return r, nil
 		}

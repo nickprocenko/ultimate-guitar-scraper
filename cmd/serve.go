@@ -14,6 +14,7 @@ import (
 
 	_ "embed"
 
+	"github.com/Pilfer/ultimate-guitar-scraper/pkg/acrcloud"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/acoustid"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/audd"
 	"github.com/Pilfer/ultimate-guitar-scraper/pkg/ultimateguitar"
@@ -45,6 +46,7 @@ var ServeCommand = cli.Command{
 }
 
 type appServer struct {
+	acrClient      *acrcloud.Client
 	acoustidClient *acoustid.Client
 	auddClient     *audd.Client
 	cache          *supabaseCache
@@ -74,9 +76,18 @@ func serveAction(c *cli.Context) {
 	}
 
 	// API keys — warn only; checked lazily in handleIdentify
+	acrKey := os.Getenv("ACRCLOUD_ACCESS_KEY")
+	acrSecret := os.Getenv("ACRCLOUD_ACCESS_SECRET")
+	acrHost := os.Getenv("ACRCLOUD_HOST")
 	acoustidKey := os.Getenv("ACOUSTID_API_KEY")
 	auddKey := os.Getenv("AUDD_API_KEY")
 
+	if acrKey != "" && acrSecret != "" && acrHost != "" {
+		srv.acrClient = &acrcloud.Client{Host: acrHost, AccessKey: acrKey, AccessSecret: acrSecret}
+		log.Println("ACRCloud enabled")
+	} else if acrKey != "" {
+		log.Println("Warning: ACRCloud needs ACRCLOUD_ACCESS_KEY, ACRCLOUD_ACCESS_SECRET and ACRCLOUD_HOST")
+	}
 	if acoustidKey != "" {
 		if _, err := exec.LookPath("fpcalc"); err != nil {
 			log.Println("Warning: fpcalc not found — AcoustID disabled")
@@ -87,7 +98,7 @@ func serveAction(c *cli.Context) {
 	if auddKey != "" {
 		srv.auddClient = &audd.Client{APIKey: auddKey}
 	}
-	if acoustidKey == "" && auddKey == "" {
+	if srv.acrClient == nil && srv.acoustidClient == nil && srv.auddClient == nil {
 		log.Println("Warning: no API keys set — /api/identify will return no_keys_configured")
 	}
 
@@ -144,7 +155,7 @@ func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if srv.acoustidClient == nil && srv.auddClient == nil {
+	if srv.acrClient == nil && srv.acoustidClient == nil && srv.auddClient == nil {
 		writeJSON(w, identifyResponse{Error: "no_keys_configured"})
 		return
 	}
@@ -190,7 +201,7 @@ func (srv *appServer) handleIdentify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Identify: AcoustID first, AudD fallback
-	result, err := identify(srv.acoustidClient, srv.auddClient, tmpWAV.Name())
+	result, err := identify(srv.acrClient, srv.acoustidClient, srv.auddClient, tmpWAV.Name())
 	if err != nil {
 		log.Printf("identify error: %v", err)
 		writeJSON(w, identifyResponse{Error: "identification_error"})
