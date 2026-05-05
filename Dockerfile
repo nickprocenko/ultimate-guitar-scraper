@@ -11,4 +11,4 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/ug-server /usr/local/bin/ug-server
 EXPOSE 8080
-CMD ["ug-server", "serve"]
+CMD ["/usr/local/bin/ug-server", "serve"]
