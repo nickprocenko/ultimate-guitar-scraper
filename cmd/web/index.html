@@ -272,7 +272,8 @@
 <button id="listen-again">🎵 Listen Again</button>
 
 <script>
-  const DURATION = 8; // seconds
+  const DURATION   = 8; // max recording seconds
+  const PROBE_EVERY = 3; // attempt identification every N seconds
 
   const btn         = document.getElementById('listen-btn');
   const btnIcon     = document.getElementById('btn-icon');
@@ -306,18 +307,25 @@
     homeSection.style.display = '';
   }
 
+  // ── Session state ────────────────────────────────────────
+  let _stream, _recorder, _chunks;
+  let _stopped = true, _probing = false;
+  let _tickTimer, _probeTimer, _hardTimer;
+
   async function startListening() {
     if (btn.classList.contains('recording') || btn.classList.contains('loading')) return;
-
     errorMsg.classList.remove('visible');
 
-    let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      _stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     } catch (e) {
       setError('Microphone access denied. Please allow mic access and try again.');
       return;
     }
+
+    _chunks  = [];
+    _stopped = false;
+    _probing = false;
 
     btn.classList.add('recording');
     btnIcon.textContent = '🎤';
@@ -325,78 +333,92 @@
     countdown.textContent = DURATION;
     countdown.classList.add('visible');
 
-    const tick = setInterval(() => {
-      const n = parseInt(countdown.textContent) - 1;
-      countdown.textContent = n > 0 ? n : '';
-      if (n <= 0) clearInterval(tick);
+    const mimeType = getSupportedMimeType();
+    _recorder = new MediaRecorder(_stream, mimeType ? { mimeType } : {});
+    _recorder.ondataavailable = e => { if (e.data.size > 0) _chunks.push(e.data); };
+    _recorder.onerror = () => { _stopAll(); setError('Recording failed.'); };
+    _recorder.start(200);
+
+    let elapsed = 0;
+    _tickTimer = setInterval(() => {
+      const rem = DURATION - (++elapsed);
+      countdown.textContent = rem > 0 ? rem : '';
+      if (rem <= 0) clearInterval(_tickTimer);
     }, 1000);
 
-    // Record audio
-    let audioBlob;
+    // Probe during recording — stop early if song found
+    _probeTimer = setInterval(_bgProbe, PROBE_EVERY * 1000);
+
+    // Hard stop at max duration → final identify with full audio
+    _hardTimer = setTimeout(() => { _stopAll(); _finalIdentify(); }, DURATION * 1000);
+  }
+
+  function _stopAll() {
+    if (_stopped) return;
+    _stopped = true;
+    clearInterval(_tickTimer);
+    clearInterval(_probeTimer);
+    clearTimeout(_hardTimer);
+    try { _recorder.stop(); } catch (_) {}
+    _stream.getTracks().forEach(t => t.stop());
+  }
+
+  async function _bgProbe() {
+    if (_stopped || _probing || _chunks.length === 0) return;
+    _probing = true;
+    let data;
     try {
-      audioBlob = await record(stream, DURATION * 1000);
-    } catch (e) {
-      clearInterval(tick);
-      stream.getTracks().forEach(t => t.stop());
-      setError('Recording failed: ' + e.message);
-      return;
+      const fd = new FormData();
+      fd.append('audio', new Blob([..._chunks], { type: _recorder.mimeType || 'audio/webm' }), 'recording.webm');
+      data = await (await fetch('/api/identify', { method: 'POST', body: fd })).json();
+    } catch (e) { _probing = false; return; }
+    _probing = false;
+    if (_stopped) return; // hard stop fired while probe was in flight
+    if (!data.error || data.error === 'no_tab_found') {
+      _stopAll();
+      btn.classList.remove('recording');
+      btnIcon.textContent = '🎵';
+      countdown.classList.remove('visible');
+      _handleResult(data);
     }
+  }
 
-    clearInterval(tick);
-    stream.getTracks().forEach(t => t.stop());
-
-    // Show loading state
+  async function _finalIdentify() {
     btn.classList.remove('recording');
     btn.classList.add('loading');
-    btnIcon.textContent = '';
-    btnLabel.textContent = 'Identifying...';
     countdown.classList.remove('visible');
-    const spinnerEl = document.createElement('div');
-    spinnerEl.className = 'spinner';
-    btnIcon.replaceWith(spinnerEl);
+    const spinEl = document.createElement('div');
+    spinEl.className = 'spinner';
+    btnIcon.replaceWith(spinEl);
+    btnLabel.textContent = 'Identifying...';
 
     let data;
     try {
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.webm');
-      const resp = await fetch('/api/identify', { method: 'POST', body: formData });
-      data = await resp.json();
+      const fd = new FormData();
+      fd.append('audio', new Blob([..._chunks], { type: _recorder.mimeType || 'audio/webm' }), 'recording.webm');
+      data = await (await fetch('/api/identify', { method: 'POST', body: fd })).json();
     } catch (e) {
-      spinnerEl.replaceWith(btnIcon);
+      spinEl.replaceWith(btnIcon);
+      btn.classList.remove('loading');
       setError('Could not reach the server. Check your connection.');
       return;
     }
 
-    spinnerEl.replaceWith(btnIcon);
+    spinEl.replaceWith(btnIcon);
     btn.classList.remove('loading');
-
-    if (data.error === 'not_recognized') {
-      setError('Song not recognized. Try holding your phone closer to the speaker.');
-      return;
-    }
-    if (data.error === 'no_tab_found') {
-      setError(`Detected "${data.detected.title}" by ${data.detected.artist}, but no tab was found on Ultimate Guitar.`);
-      return;
-    }
-    if (data.error) {
-      setError('Something went wrong. Please try again.');
-      return;
-    }
-
-    showResults(data);
+    _handleResult(data);
   }
 
-  function record(stream, durationMs) {
-    return new Promise((resolve, reject) => {
-      const chunks = [];
-      const mimeType = getSupportedMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-      recorder.onerror = e => reject(e.error);
-      recorder.start(100);
-      setTimeout(() => recorder.stop(), durationMs);
-    });
+  function _handleResult(data) {
+    if (data.error === 'not_recognized') {
+      setError('Song not recognized. Try holding your phone closer to the speaker.');
+    } else if (data.error === 'no_tab_found') {
+      setError(`Detected "${esc(data.detected.title)}" by ${esc(data.detected.artist)}, but no tab was found on Ultimate Guitar.`);
+    } else if (data.error) {
+      setError('Something went wrong. Please try again.');
+    } else {
+      showResults(data);
+    }
   }
 
   function getSupportedMimeType() {
