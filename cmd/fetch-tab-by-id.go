@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -11,7 +12,7 @@ import (
 
 var FetchTab = cli.Command{
 	Name:        "fetch",
-	Usage:       "ug f -id {tabId}",
+	Usage:       "ug f -id {tabId} [-json]",
 	Description: "Fetch a tab from ultimate-guitar.com by id",
 	Aliases:     []string{"f"},
 	Flags: []cli.Flag{
@@ -19,6 +20,10 @@ var FetchTab = cli.Command{
 			Name:  "id",
 			Value: 1947141,
 			Usage: "",
+		},
+		cli.BoolFlag{
+			Name:  "json",
+			Usage: "Output raw JSON instead of formatted text",
 		},
 	},
 	Action: fetchTabByID,
@@ -38,11 +43,19 @@ func fetchTabByID(c *cli.Context) {
 		log.Fatal(err)
 	}
 
+	if c.Bool("json") {
+		out, err := json.MarshalIndent(tab, "", "  ")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(string(out))
+		return
+	}
+
 	fmt.Println("----------------------------------------------------------------------")
 	fmt.Println("Song name:", tab.SongName, " by ", tab.ArtistName)
 	fmt.Println("----------------------------------------------------------------------")
 
-	// Remove the syntax delimiters as a proof of concept
 	tabOut := strings.ReplaceAll(tab.Content, "[tab]", "")
 	tabOut = strings.ReplaceAll(tabOut, "[/tab]", "")
 	tabOut = strings.ReplaceAll(tabOut, "[ch]", "")
