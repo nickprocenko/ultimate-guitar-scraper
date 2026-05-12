@@ -16,9 +16,11 @@ func main() {
 	app.Version = "0.0.1"
 	app.Commands = []cli.Command{
 		cmd.FetchTab,
+		cmd.FetchTabURL,
 		cmd.ExportTabHTML,
 		cmd.ExportWav,
 		cmd.GetAll,
+		cmd.SearchCmd,
 	}
 
 	err := app.Run(os.Args)
